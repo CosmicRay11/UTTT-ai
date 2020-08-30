@@ -835,8 +835,8 @@ class Node():
 
     ## update a node when a simulation from it has occurred
     def do_simulate_update(self):
-        node.update_parent_leafy()
-        node.hasSimulated = True
+        self.update_parent_leafy()
+        self.hasSimulated = True
 
     ## update the node's parent info on whether the parent is a leaf or not
     def update_parent_leafy(self):
