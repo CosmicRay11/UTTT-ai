@@ -8,6 +8,7 @@ import random
 import tkinter as tk
 import time
 import copy
+import math
 
 
 ##DTI: board is valid && line caches remain valid && moves retains the sequence of moves leading to the board state && 
@@ -181,6 +182,18 @@ class Board(object):
                 state = self.stateDict["draw"]
         
         return state
+
+    def get_local_lines(self, x, y, player):
+        if player == self.xstr:
+            return self.localLinesX[x][y]
+        elif player == self.ostr:
+            return self.localLinesO[x][y]
+
+    def get_global_lines(self, player):
+        if player == self.xstr:
+            return self.globalLinesX
+        elif player == self.ostr:
+            return self.globalLinesO
 
     ## helper function to return whether a 3x3 grid is in an inevitable draw situation, given a 3x3 array of states
     # (currently not in use)
@@ -671,14 +684,14 @@ class MCTS(Strat):
             
             boardCopy = copy.deepcopy(board)
 
-            ## select a leaf node (currently at random)
-            boardCopy, leaf = self.selection(boardCopy, self.tree.root)
+            ## select a leaf node (currently using a heuristic formula to choose nodes that explore promising deep variants and a lot of shallow variants also)
+            boardCopy, leaf = self.selection(boardCopy, self.tree.root, aiString)
 
-            ## choose a child of the leaf (currently randomly)
+            ## choose a child of the leaf (at random)
             child = self.expansion(boardCopy, leaf)
 
             ## carry out a simulation of the game from the child node and use this info to update the game tree
-            self.simulation(boardCopy, child)
+            self.simulation(boardCopy, child, aiString)
 
             # update the gui, if applicable
             self.update_root()
@@ -695,13 +708,26 @@ class MCTS(Strat):
         self.update_tree(bestMoveNode, copy.deepcopy(board))
         
     ## select a leaf node to explore the game tree from
-    def selection(self, board, root):
+    def selection(self, board, root, aiString):
         node = root
         while not node.is_leaf():
-            node = random.choice(node.children)
+            node = max((child for child in node.children), key = lambda x: self.select_express(x, node, aiString))
             x,y,i,j = node.move
             board.make_move(x,y,i,j)
         return board, node
+
+    def select_express(self, child, parent, aiString):
+        if aiString == self.tree.board.xstr:
+            wi = child.num
+        else:
+            wi = child.den - child.num
+        ni = float(child.den)
+        Ni = parent.den
+        c = 1.4142
+        if ni == 0:
+            return float("inf")
+        else:
+            return wi/ni + c * ((math.log(Ni)/ ni) ** 0.5)
 
     ## expand the game tree from a leaf node, and select a child node to conduct a simulation from
     def expansion(self, board, parent):
@@ -720,13 +746,13 @@ class MCTS(Strat):
             return parent
         
     # simulate one playout from a node, and backpropagate the information this gives along the game tree
-    def simulation(self, board, node):
+    def simulation(self, board, node, aiString): # param unnecc
         node.do_simulate_update()
         while board.game_state() == board.stateDict["ongoing"]:
-            moves = board.get_valid_moves()            
-            x,y,i,j = random.choice(moves)
+            moves = board.get_valid_moves()
+            move = max((move for move in moves), key = lambda x: self.simulate_heuristic(x, board))
+            x,y,i,j = move
             board.make_move(x,y,i,j)
-
         state = board.game_state()
         if state == board.stateDict["X win"]:
             score = 1
@@ -736,6 +762,28 @@ class MCTS(Strat):
             score = 0.5
 
         self.back_propagate(node, score)
+
+    # not better than lots of random ones yet
+    def simulate_heuristic(self, move, board):
+        return random.random()
+
+    
+        x,y,i,j = move
+        player = board.next_player
+        board.make_move(x,y,i,j)
+
+        score = 0
+        for a in range(3):
+            for b in range(3):
+                lines = board.get_local_lines(a,b, player)
+                lineSum = sum(sum(t for t in line) for line in lines)
+                score += lineSum
+
+        globalLines = board.get_global_lines(player)
+        score += 10 * sum(sum(t for t in line) for line in globalLines) # heuristic
+        print(score)
+        board.un_make_move()
+        return score
 
     ## back propagate the result of a simulation along the game tree
     def back_propagate(self, node, score):
@@ -747,33 +795,49 @@ class MCTS(Strat):
         node.num += score
         node.den += 1
 
-    ## select the best move for the current player to make, given the current state of the game tree
+    ## select the best move for the current player to make, given the current state of the game tree - the node with greatest denominator
     def choose_best_move(self, aiString):
         children = self.tree.root.children
-        if aiString == board.ostr:
-            minimum = 1
-            bestMove = None
-            for c in children:
-                if c.den != 0:
-                    ratio = float(c.num) / c.den
-                else:
-                    ratio = 0.5
-                if ratio <= minimum:
-                    minimum = ratio
-                    bestMove = c
-        else:
-            maximum = 0
-            bestMove = None
-            for c in children:
-                if c.den != 0:
-                    ratio = float(c.num) / c.den
-                else:
-                    ratio = 0.5
-                if ratio >= maximum:
-                    maximum = ratio
-                    bestMove = c
+        maximum = 0
+        bestMoves = []
+        for c in children:
+            print(c)
+            if c.den == maximum:
+                maximum = c.den
+                bestMoves.append(c)
+            elif c.den > maximum:
+                bestMoves = [c]
+                maximum = c.den
 
-        return bestMove
+        return random.choice(bestMoves)
+
+    ## select the best move for the current player to make, given the current state of the game tree - the node with best win ratio
+##    def choose_best_move(self, aiString):
+##        children = self.tree.root.children
+##        if aiString == board.ostr:
+##            minimum = 1
+##            bestMove = None
+##            for c in children:
+##                if c.den != 0:
+##                    ratio = float(c.num) / c.den
+##                else:
+##                    ratio = 0.5
+##                if ratio <= minimum:
+##                    minimum = ratio
+##                    bestMove = c
+##        else:
+##            maximum = 0
+##            bestMove = None
+##            for c in children:
+##                if c.den != 0:
+##                    ratio = float(c.num) / c.den
+##                else:
+##                    ratio = 0.5
+##                if ratio >= maximum:
+##                    maximum = ratio
+##                    bestMove = c
+##
+##        return bestMove
 
 ## a custom tree class for use in the MCTS strat
 class Tree():
@@ -844,7 +908,7 @@ class Node():
             self.parent.childMoveCount += 1
 
 
-board = Board("game4.txt")
+board = Board()
 ai = MCTS(board)
 
 root = tk.Tk()
